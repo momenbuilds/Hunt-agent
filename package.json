@@ -24,7 +24,8 @@
     "lint": "biome check src",
     "lint:fix": "biome check --write src",
     "smoke": "bash scripts/smoke.sh",
-    "ci": "npm run typecheck && npm run lint && npm run test && npm run build"
+    "test:providers": "bash scripts/test-providers.sh",
+    "ci": "npm run typecheck && npm run lint && npm run test && npm run build && npm run smoke"
   },
   "keywords": [
     "hunt-agent",
