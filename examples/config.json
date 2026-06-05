@@ -1,0 +1,37 @@
+{
+  "_comment": "Example hunt-agent config. Copy to ~/.hunt-agent/config.json. No real secrets here.",
+  "backend": "",
+  "provider": "claude-code",
+  "model": "",
+  "base_url": "",
+  "api_key": "",
+  "models": {
+    "default": "claude-code:"
+  },
+  "fallbacks": {
+    "default": ["ollama:qwen2.5-coder:14b"]
+  },
+  "providers": {
+    "claude-code": {
+      "type": "local-cli",
+      "enabled": true,
+      "command": "claude",
+      "args": ["-p"],
+      "inputMode": "argument",
+      "outputMode": "stdout"
+    },
+    "ollama": {
+      "type": "local-llm",
+      "enabled": true,
+      "baseUrl": "http://localhost:11434"
+    }
+  },
+  "mcp_servers": [],
+  "skills_dirs": [],
+  "disabled_skills": [],
+  "max_steps": 0,
+  "auto_compact_threshold": 0,
+  "streaming_enabled": true,
+  "thinking_enabled": false,
+  "plugins": []
+}

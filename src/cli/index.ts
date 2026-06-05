@@ -16,8 +16,10 @@ import { type IngestServerHandle, startIngestServer } from '../browser/server.js
 import { CaptureStore } from '../browser/store.js';
 import * as config from '../config/config.js';
 import { CoverageStore } from '../coverage/store.js';
+import { startDashboard } from '../dashboard/server.js';
 import { findingRequestForBurp } from '../findings/httpRequest.js';
 import { Store as FindingsStore } from '../findings/store.js';
+import { runInit } from '../init/init.js';
 import { IntelligenceStore } from '../intelligence/store.js';
 import * as llmFactory from '../llm/factory.js';
 import { modelReliabilityWarning } from '../llm/modelWarnings.js';
@@ -37,6 +39,15 @@ import {
   createProviderRegistry,
   formatProviderStatusTable,
 } from '../providers/index.js';
+import { replaySession } from '../replay/replay.js';
+import { generateJSONReport } from '../report/json.js';
+import { generateMarkdownReport } from '../report/markdown.js';
+import { generateSARIFReport } from '../report/sarif.js';
+import {
+  checkURLInScope as checkURLInScopePolicy,
+  loadScopePolicy,
+  validateScopeFile,
+} from '../scope/policy.js';
 import * as sessionStore from '../session/store.js';
 import { skillSearchDirs } from '../skills/discovery.js';
 import { LoadSkillTool } from '../skills/loadSkill.js';
@@ -110,6 +121,34 @@ interface ParsedFlags {
   modelStatus: boolean;
   modelTest: string;
   modelBench: boolean;
+  // Scope subcommands
+  scopeValidate: string;
+  scopeCheck: string;
+  // Report subcommands
+  reportFormat: string;
+  // Replay subcommand
+  replaySessionId: string;
+  replayJson: boolean;
+  // Init subcommand
+  initRun: boolean;
+  initProvider: string;
+  initTarget: string;
+  initYes: boolean;
+  initForce: boolean;
+  // Assess subcommand
+  headless: boolean;
+  objective: string;
+  scopePath: string;
+  assessJson: boolean;
+  // Dashboard subcommand
+  dashboardRun: boolean;
+  dashboardPort: number;
+  dashboardNoOpen: boolean;
+  // Skills subcommands
+  skillsList: boolean;
+  skillsShow: string;
+  skillsValidate: boolean;
+  skillsPath: boolean;
 }
 
 function parseFlags(argv: string[]): ParsedFlags {
@@ -149,6 +188,27 @@ function parseFlags(argv: string[]): ParsedFlags {
     modelStatus: false,
     modelTest: '',
     modelBench: false,
+    scopeValidate: '',
+    scopeCheck: '',
+    reportFormat: '',
+    replaySessionId: '',
+    replayJson: false,
+    initRun: false,
+    initProvider: '',
+    initTarget: '',
+    initYes: false,
+    initForce: false,
+    headless: false,
+    objective: '',
+    scopePath: '',
+    assessJson: false,
+    dashboardRun: false,
+    dashboardPort: 7788,
+    dashboardNoOpen: false,
+    skillsList: false,
+    skillsShow: '',
+    skillsValidate: false,
+    skillsPath: false,
   };
   parseSubcommand(argv, out);
   for (let i = 0; i < argv.length; i += 1) {
@@ -245,6 +305,18 @@ function parseFlags(argv: string[]): ParsedFlags {
       case '--provider-status':
         out.providerStatus = true;
         break;
+      case '--headless':
+        out.headless = true;
+        break;
+      case '--objective':
+        out.objective = next();
+        break;
+      case '--scope':
+        out.scopePath = next();
+        break;
+      case '--json':
+        // context-dependent; handled in subcommand parsing
+        break;
     }
   }
   return out;
@@ -254,7 +326,9 @@ function parseSubcommand(argv: string[], out: ParsedFlags): void {
   const subcommandStart = firstSubcommandIndex(argv);
   if (subcommandStart < 0) return;
   const head = argv[subcommandStart];
-  const sub = argv[subcommandStart + 1];
+  const rest = argv.slice(subcommandStart + 1);
+  const sub = rest[0];
+
   if (head === 'provider') {
     switch (sub) {
       case 'list':
@@ -264,37 +338,135 @@ function parseSubcommand(argv: string[], out: ParsedFlags): void {
         out.providerStatus = true;
         break;
       case 'add':
-        out.providerAdd = argv[2] ?? '';
+        out.providerAdd = rest[1] ?? '';
         break;
       case 'remove':
-        out.providerRemove = argv[2] ?? '';
+        out.providerRemove = rest[1] ?? '';
         break;
     }
     return;
   }
+
+  if (head === 'scope') {
+    switch (sub) {
+      case 'validate':
+        out.scopeValidate = rest[1] ?? './scope.yaml';
+        break;
+      case 'check':
+        out.scopeCheck = rest[1] ?? '';
+        break;
+    }
+    return;
+  }
+
+  if (head === 'report') {
+    switch (sub) {
+      case 'markdown':
+      case 'json':
+      case 'sarif':
+        out.reportFormat = sub;
+        break;
+    }
+    return;
+  }
+
+  if (head === 'replay') {
+    out.replaySessionId = sub ?? '';
+    if (rest.includes('--json')) out.replayJson = true;
+    return;
+  }
+
+  if (head === 'init') {
+    out.initRun = true;
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i];
+      if (a === '--provider' && rest[i + 1]) {
+        out.initProvider = rest[++i] ?? '';
+      } else if (a === '--target' && rest[i + 1]) {
+        out.initTarget = rest[++i] ?? '';
+      } else if (a === '--yes' || a === '-y') {
+        out.initYes = true;
+      } else if (a === '--force') {
+        out.initForce = true;
+      }
+    }
+    return;
+  }
+
+  if (head === 'assess') {
+    out.headless = true;
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i];
+      if (a === '--headless') {
+        out.headless = true;
+      } else if (a === '--objective' && rest[i + 1]) {
+        out.objective = rest[++i] ?? '';
+      } else if (a === '--scope' && rest[i + 1]) {
+        out.scopePath = rest[++i] ?? '';
+      } else if (a === '--json') {
+        out.assessJson = true;
+      } else if (a === '--dangerously-skip-permissions') {
+        out.yolo = true;
+      }
+    }
+    return;
+  }
+
+  if (head === 'dashboard') {
+    out.dashboardRun = true;
+    for (let i = 0; i < rest.length; i++) {
+      const a = rest[i];
+      if (a === '--port' && rest[i + 1]) {
+        const n = Number.parseInt(rest[++i] ?? '', 10);
+        if (Number.isFinite(n)) out.dashboardPort = n;
+      } else if (a === '--no-open') {
+        out.dashboardNoOpen = true;
+      }
+    }
+    return;
+  }
+
+  if (head === 'skills') {
+    switch (sub) {
+      case 'list':
+        out.skillsList = true;
+        break;
+      case 'show':
+        out.skillsShow = rest[1] ?? '';
+        break;
+      case 'validate':
+        out.skillsValidate = true;
+        break;
+      case 'path':
+        out.skillsPath = true;
+        break;
+    }
+    return;
+  }
+
   if (head !== 'model') return;
   switch (sub) {
     case 'list':
       out.listLLMModels = true;
       break;
     case 'use':
-      out.modelUse = argv[2] ?? '';
+      out.modelUse = rest[1] ?? '';
       break;
     case 'route':
-      out.modelRoute = argv.slice(2).join(' ');
+      out.modelRoute = rest.slice(1).join(' ');
       break;
     case 'routes':
       out.modelRoutes = true;
       break;
     case 'fallback':
-      out.modelFallbackRole = argv[2] ?? '';
-      out.modelFallbackRefs = argv.slice(3);
+      out.modelFallbackRole = rest[1] ?? '';
+      out.modelFallbackRefs = rest.slice(2);
       break;
     case 'status':
       out.modelStatus = true;
       break;
     case 'test':
-      out.modelTest = argv[2] ?? '';
+      out.modelTest = rest[1] ?? '';
       break;
     case 'bench':
       out.modelBench = true;
@@ -315,11 +487,25 @@ function firstSubcommandIndex(argv: string[]): number {
     '--resume',
     '--log',
     '--debug-session-path',
+    '--objective',
+    '--scope',
+    '--port',
   ]);
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (!arg) continue;
-    if (arg === 'provider' || arg === 'model') return i;
+    if (
+      arg === 'provider' ||
+      arg === 'model' ||
+      arg === 'scope' ||
+      arg === 'report' ||
+      arg === 'replay' ||
+      arg === 'init' ||
+      arg === 'assess' ||
+      arg === 'dashboard' ||
+      arg === 'skills'
+    )
+      return i;
     if (flagsWithValue.has(arg)) i += 1;
   }
   return -1;
@@ -391,6 +577,9 @@ async function main(): Promise<number> {
 
   const commandResult = await handleProviderModelCommand(flags, cfg);
   if (commandResult !== undefined) return commandResult;
+
+  const earlyResult = await handleEarlyCommands(flags);
+  if (earlyResult !== undefined) return earlyResult;
 
   // Browser MCP is opt-in PER SESSION via --browser, and never persisted:
   // a user must pass --browser each time they want it. We build a
@@ -1112,6 +1301,284 @@ async function handleProviderModelCommand(
     }
   }
   return undefined;
+}
+
+async function handleEarlyCommands(flags: ParsedFlags): Promise<number | undefined> {
+  // scope validate
+  if (flags.scopeValidate) {
+    const result = validateScopeFile(flags.scopeValidate);
+    if (result.errors.length > 0) {
+      for (const err of result.errors) {
+        process.stdout.write(`${err}\n`);
+      }
+    }
+    if (result.ok) {
+      process.stdout.write(`scope file OK: ${flags.scopeValidate}\n`);
+      return 0;
+    }
+    return 1;
+  }
+
+  // scope check
+  if (flags.scopeCheck) {
+    const policy = loadScopePolicy(process.cwd());
+    const decision = checkURLInScopePolicy(flags.scopeCheck, policy);
+    if (decision.ok) {
+      process.stdout.write(`allowed: ${flags.scopeCheck}\n`);
+      return 0;
+    }
+    process.stdout.write(
+      `blocked: ${flags.scopeCheck}\n  reason: ${decision.reason ?? 'out of scope'}\n`,
+    );
+    return 1;
+  }
+
+  // report subcommands
+  if (flags.reportFormat) {
+    try {
+      let outPath: string;
+      switch (flags.reportFormat) {
+        case 'markdown':
+          outPath = await generateMarkdownReport();
+          break;
+        case 'json':
+          outPath = await generateJSONReport();
+          break;
+        case 'sarif':
+          outPath = await generateSARIFReport();
+          break;
+        default:
+          process.stderr.write(`unknown report format: ${flags.reportFormat}\n`);
+          return 1;
+      }
+      process.stdout.write(`report written to ${outPath}\n`);
+      return 0;
+    } catch (err) {
+      process.stderr.write(`report error: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
+
+  // replay subcommand
+  if (flags.replaySessionId) {
+    try {
+      const output = replaySession(flags.replaySessionId, { json: flags.replayJson });
+      process.stdout.write(output);
+      return 0;
+    } catch (err) {
+      process.stderr.write(`replay error: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
+
+  // init subcommand
+  if (flags.initRun) {
+    try {
+      await runInit({
+        provider: flags.initProvider || flags.provider || undefined,
+        target: flags.initTarget || undefined,
+        yes: flags.initYes,
+        force: flags.initForce,
+      });
+      return 0;
+    } catch (err) {
+      process.stderr.write(`init error: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
+
+  // dashboard subcommand
+  if (flags.dashboardRun) {
+    try {
+      const srv = await startDashboard({ port: flags.dashboardPort });
+      process.stdout.write(`hunt-agent dashboard: ${srv.url}\n`);
+      process.stdout.write('Press Ctrl-C to stop.\n');
+      await new Promise<void>((resolve) => {
+        process.on('SIGINT', () => resolve());
+        process.on('SIGTERM', () => resolve());
+      });
+      await srv.stop();
+      return 0;
+    } catch (err) {
+      process.stderr.write(`dashboard error: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
+
+  // skills subcommands
+  if (flags.skillsList || flags.skillsShow || flags.skillsValidate || flags.skillsPath) {
+    // We need skills loaded — do minimal setup
+    const cfg = config.load();
+    const skills2 = new SkillRegistry();
+    const allSkillDirs2 = skillSearchDirs(cfg.skills_dirs);
+    for (const d of allSkillDirs2) skills2.loadDir(d);
+    if (flags.skillsList) {
+      for (const sk of skills2.list()) {
+        process.stdout.write(`- ${sk.name}\n    ${sk.description}\n    (${sk.path})\n`);
+      }
+      return 0;
+    }
+    if (flags.skillsShow) {
+      const sk = skills2.list().find((s) => s.name === flags.skillsShow);
+      if (!sk) {
+        process.stderr.write(`skill not found: ${flags.skillsShow}\n`);
+        return 1;
+      }
+      const { readFileSync } = await import('node:fs');
+      process.stdout.write(readFileSync(sk.path, 'utf8'));
+      return 0;
+    }
+    if (flags.skillsValidate) {
+      const all = skills2.list();
+      let ok = true;
+      for (const sk of all) {
+        if (!sk.name || !sk.description) {
+          process.stdout.write(`FAIL ${sk.path}: missing name or description\n`);
+          ok = false;
+        } else {
+          process.stdout.write(`OK   ${sk.name}\n`);
+        }
+      }
+      return ok ? 0 : 1;
+    }
+    if (flags.skillsPath) {
+      for (const d of allSkillDirs2) process.stdout.write(`${d}\n`);
+      return 0;
+    }
+  }
+
+  // headless assess mode
+  if (flags.headless) {
+    return await runHeadlessAssess(flags);
+  }
+
+  return undefined;
+}
+
+async function runHeadlessAssess(flags: ParsedFlags): Promise<number> {
+  const cfg = config.load();
+  const scopeFilePath = flags.scopePath || './scope.yaml';
+
+  // Validate target is in scope if a target URL was provided via env or objective analysis
+  // (headless mode just validates scope is loaded and exits cleanly)
+  process.stdout.write('[assess] headless mode starting\n');
+  if (flags.scopePath) {
+    const validation = validateScopeFile(flags.scopePath);
+    if (!validation.ok) {
+      process.stderr.write(`[assess] scope file invalid: ${flags.scopePath}\n`);
+      for (const err of validation.errors) process.stderr.write(`  ${err}\n`);
+      return 1;
+    }
+  }
+  process.stdout.write(`[assess] scope: ${scopeFilePath}\n`);
+  process.stdout.write(`[assess] objective: ${flags.objective || '(none provided)'}\n`);
+
+  // Check if a model is available
+  let client: ReturnType<typeof llmFactory.newFromConfig>;
+  try {
+    client = llmFactory.newFromConfig(cfg, { noFallback: flags.noFallback });
+  } catch (err) {
+    process.stderr.write(`[assess] no model configured: ${(err as Error).message}\n`);
+    return 2;
+  }
+
+  if (!flags.objective) {
+    process.stderr.write('[assess] --objective is required for headless mode\n');
+    return 1;
+  }
+
+  // Skills
+  const skills2 = new SkillRegistry();
+  for (const d of skillSearchDirs(cfg.skills_dirs)) skills2.loadDir(d);
+
+  // Prompter — auto-deny in headless unless yolo
+  const { AlwaysDeny } = await import('../permission/permission.js');
+  const headlessPrompter = new YoloPrompter(new AlwaysDeny(), flags.yolo);
+
+  const findingsStore = new FindingsStore('findings');
+  const target = newTarget();
+  const sessionDir = sessionStore.dirFromPath('');
+  const sessionID = sessionStore.newID();
+  const sessionStoreInstance = sessionStore.Store.newWithID(sessionDir, sessionID);
+
+  const tools = new ToolRegistry();
+  tools.register(new ShellTool());
+  tools.register(new BashTool());
+  tools.register(new FileReadTool());
+  tools.register(new FileReadToolAlias());
+  tools.register(new FileWriteTool());
+  tools.register(new FileWriteToolAlias());
+  tools.register(new FileEditTool());
+  tools.register(new FileEditToolAlias());
+  tools.register(new GlobTool());
+  tools.register(new GrepTool());
+  tools.register(new HTTPTool(target));
+  tools.register(new WebFetchTool());
+  tools.register(new WebSearchTool());
+  tools.register(
+    new ConfirmFindingTool(findingsStore, (_finding, _path) => {
+      // no-op in headless
+    }),
+  );
+  tools.register(new LoadSkillTool(skills2));
+  tools.register(new ReadPayloadsTool(skills2));
+  tools.register(new ReadSkillFileTool(skills2));
+
+  const agent = new Agent({
+    client,
+    tools,
+    skills: skills2,
+    prompter: headlessPrompter,
+    store: sessionStoreInstance,
+    target,
+    thinkingEnabled: cfg.thinking_enabled,
+    maxSteps: cfg.max_steps > 0 ? cfg.max_steps : undefined,
+    autoCompactThreshold: effectiveAutoCompactThreshold(cfg),
+    toolingProfile: cfg.tooling_profile,
+    promptProfile: effectivePromptProfile(cfg),
+    streamingEnabled: false,
+  });
+
+  const ctl = new AbortController();
+  const onSig = () => ctl.abort();
+  process.on('SIGINT', onSig);
+  process.on('SIGTERM', onSig);
+
+  let errorOccurred = false;
+  let findingsConfirmed = false;
+
+  try {
+    await agent.run(flags.objective, ctl.signal, (evt) => {
+      if (flags.assessJson) {
+        process.stdout.write(`${JSON.stringify(evt)}\n`);
+      } else if (evt.type === 'assistant-text') {
+        process.stdout.write(`[assistant] ${evt.text}\n`);
+      } else if (evt.type === 'tool-call') {
+        process.stdout.write(`[tool] ${evt.name}(${evt.argsJSON.slice(0, 80)})\n`);
+      }
+      if (evt.type === 'error') {
+        errorOccurred = true;
+        process.stderr.write(`[assess] error: ${evt.err.message}\n`);
+      }
+      if (evt.type === 'tool-result' && evt.name === 'confirm_finding') {
+        findingsConfirmed = true;
+      }
+    });
+    process.stdout.write('[assess] completed\n');
+    if (errorOccurred) return 2;
+    if (findingsConfirmed) return 1;
+    return 0;
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      process.stderr.write('[assess] aborted\n');
+      return 2;
+    }
+    process.stderr.write(`[assess] error: ${(err as Error).message}\n`);
+    return 2;
+  } finally {
+    process.off('SIGINT', onSig);
+    process.off('SIGTERM', onSig);
+  }
 }
 
 function providerConfigForAdd(id: string): config.ProviderConfig {

@@ -14,7 +14,7 @@ export class LoadSkillTool implements Tool {
   }
 
   description(): string {
-    return "Load the full body of a named skill. Skills are pre-authored playbooks for specific pentesting workflows (recon, web vuln hunting, etc.). Call this when one of the listed skills matches the user's task — the body contains step-by-step guidance, recommended tools, and example commands.";
+    return "Load the full body of a named skill. Skills are pre-authored playbooks for specific security assessment workflows (recon, web vuln hunting, etc.). Call this when one of the listed skills matches the user's task — the body contains step-by-step guidance, recommended tools, and example commands.";
   }
 
   schema(): Record<string, unknown> {

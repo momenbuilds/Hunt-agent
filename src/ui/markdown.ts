@@ -108,7 +108,7 @@ function trimOuterBlankLines(lines: string[]): string[] {
  * containers. Fenced code renders as bare
  * highlighted text (no chrome at all); we keep the gutter on top of
  * that because line numbers are the actually-useful affordance for
- * pentest workflows (referencing payload line 3 by number, etc.).
+ * security assessment workflows (referencing payload line 3 by number, etc.).
  *
  * Result for hello world:
  *

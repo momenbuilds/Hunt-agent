@@ -253,7 +253,7 @@ When you have CONFIRMED a vulnerability — meaning you have reproduced it end-t
 Confirmed means reproduced. Do NOT call this for theoretical findings, suspected behavior, or scanner hits you haven't manually verified. The tool writes a markdown report under ./findings/ and surfaces a banner in the TUI; the user counts confirmed findings, not chatter. After calling, briefly summarize for the user and ask whether to continue testing or stop.
 
 # Skills
-Skills are pre-authored playbooks for specific pentest workflows. When a user's task matches a skill, call 'load_skill' with that skill's name BEFORE planning, then follow the skill's guidance.
+Skills are pre-authored playbooks for specific security assessment workflows. When a user's task matches a skill, call 'load_skill' with that skill's name BEFORE planning, then follow the skill's guidance.
 `;
 
 export type ToolingProfile = 'minimal' | 'full';

@@ -1,0 +1,94 @@
+# Example GitHub Actions workflow: run hunt-agent against localhost targets only.
+#
+# SAFETY NOTICE:
+# - Only test localhost or services started within this workflow job.
+# - Always provide a scope.yaml limiting targets to localhost.
+# - Never run against production, staging, or external systems in CI.
+# - Use headless mode (--headless) — no TUI required.
+# - Requires a local model provider (Ollama) or an API key secret.
+
+name: Local Security Check
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  security-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install hunt-agent
+        run: npm install -g @hunt-agent/cli
+
+      # Start the app under test on localhost
+      - name: Start target app
+        run: |
+          # Replace with your actual app startup command
+          node tests/fixtures/security-apps/cors-app/server.js &
+          echo "APP_PID=$!" >> $GITHUB_ENV
+          sleep 1
+
+      # Write a scope.yaml that only allows localhost
+      - name: Write scope.yaml
+        run: |
+          cat > scope.yaml <<'EOF'
+          displayName: CI Security Check
+          scope:
+            allowedTargets:
+              - http://127.0.0.1:3003
+            blockedTargets: []
+            requireApprovalFor:
+              - shell
+            forbiddenActions:
+              - destructive_testing
+          EOF
+
+      # Validate the scope file before running
+      - name: Validate scope
+        run: hunt-agent scope validate scope.yaml
+
+      # Check a URL is in scope
+      - name: Scope check
+        run: hunt-agent scope check http://127.0.0.1:3003
+
+      # Run headless assessment (requires a configured provider)
+      # Uncomment and configure if a model provider is available:
+      # - name: Run headless assessment
+      #   env:
+      #     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      #   run: |
+      #     hunt-agent init --yes --target http://127.0.0.1:3003
+      #     hunt-agent assess \
+      #       --headless \
+      #       --objective "Check for CORS misconfiguration on /api/data" \
+      #       --scope scope.yaml \
+      #       --json
+
+      # Generate a report of any confirmed findings
+      - name: Generate report
+        run: |
+          hunt-agent report json || true
+          hunt-agent report sarif || true
+
+      # Upload SARIF to GitHub Security tab (optional)
+      # - name: Upload SARIF
+      #   uses: github/codeql-action/upload-sarif@v3
+      #   if: always()
+      #   with:
+      #     sarif_file: reports/report.sarif
+
+      - name: Stop target app
+        if: always()
+        run: kill $APP_PID 2>/dev/null || true

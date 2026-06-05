@@ -25,6 +25,10 @@
     "lint:fix": "biome check --write src",
     "smoke": "bash scripts/smoke.sh",
     "test:providers": "bash scripts/test-providers.sh",
+    "test:ollama": "bash scripts/test-ollama.sh",
+    "test:local-bug": "bash scripts/test-local-bug.sh",
+    "fixtures:list": "node -e \"const fs=require('fs');fs.readdirSync('tests/fixtures/security-apps').filter(d=>fs.statSync('tests/fixtures/security-apps/'+d).isDirectory()).forEach(d=>console.log(d))\"",
+    "bench:local": "bash scripts/test-local-bug.sh",
     "ci": "npm run typecheck && npm run lint && npm run test && npm run build && npm run smoke"
   },
   "keywords": [

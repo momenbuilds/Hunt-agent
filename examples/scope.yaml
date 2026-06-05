@@ -1,0 +1,55 @@
+# hunt-agent scope configuration — complete example
+# Copy this file to your project root as scope.yaml and edit it.
+# Only test targets listed in allowedTargets.
+
+displayName: Example Security Assessment
+
+scope:
+  # URLs that are IN scope for testing.
+  # The agent will only send HTTP requests to these targets.
+  # Paths are prefix-matched: http://127.0.0.1:3000 covers all sub-paths.
+  allowedTargets:
+    - http://127.0.0.1:3000
+    - http://127.0.0.1:8080
+
+  # URLs that are explicitly OUT of scope even if they match allowedTargets.
+  # Use this to carve out production endpoints from a staging wildcard.
+  blockedTargets:
+    - https://production.example.com
+    - https://admin.example.com
+
+  # HTTP methods to allow. If omitted, all methods are allowed.
+  # Uncomment to restrict to read-only methods:
+  # allowedMethods:
+  #   - GET
+  #   - HEAD
+  #   - OPTIONS
+
+  # HTTP methods to block explicitly.
+  blockedMethods:
+    - DELETE
+
+  # URL path prefixes to block (within any allowedTarget).
+  blockedPaths:
+    - /admin
+    - /internal
+    - /debug
+
+  # Tool categories that require explicit user approval before running.
+  requireApprovalFor:
+    - shell
+    - file_write
+
+  # Actions the agent must never perform regardless of user input.
+  forbiddenActions:
+    - destructive_testing
+    - credential_dumping
+
+# Optional: rate-limit HTTP requests to avoid overwhelming the target.
+maxRequestsPerMinute: 60
+
+# Optional: human-readable note about what this engagement covers.
+authorizationNotes: |
+  Authorized security assessment for localhost development server.
+  Testing window: local dev only.
+  Contact: security@example.com

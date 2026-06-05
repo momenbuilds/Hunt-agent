@@ -1,5 +1,5 @@
 // http tool. Sends a single HTTP request with TLS verification disabled
-// (pentest convention). Does not follow redirects — testers want to see
+// (security testing convention). Does not follow redirects — security testers need to see
 // the 30x.
 //
 // undici is used (not the global fetch) because we need to inject a
@@ -17,7 +17,7 @@ const REQUEST_TIMEOUT_MS = 60 * 1000;
 
 // Dispatcher shared by every http-tool call so we don't pay TLS setup
 // repeatedly. rejectUnauthorized:false disables TLS verification
-// per request (pentest convention).
+// per request (security testing convention).
 const insecureDispatcher = new Agent({
   connect: { rejectUnauthorized: false },
   headersTimeout: REQUEST_TIMEOUT_MS,
@@ -106,7 +106,7 @@ export class HTTPTool implements Tool {
     const init: Parameters<typeof undiciFetch>[1] = {
       method,
       headers,
-      // No automatic redirect following — pentesters want to see the 30x.
+      // No automatic redirect following — security testers need to see the 30x.
       redirect: 'manual',
       signal,
       dispatcher: insecureDispatcher,

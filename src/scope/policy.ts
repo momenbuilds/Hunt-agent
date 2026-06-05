@@ -9,6 +9,9 @@ export interface ScopePolicy {
   maxRequestsPerMinute?: number;
   requireApprovalFor: string[];
   forbiddenActions: string[];
+  allowedMethods?: string[];
+  blockedMethods?: string[];
+  blockedPaths?: string[];
 }
 
 export interface ScopeDecision {
@@ -70,9 +73,86 @@ export function parseScopePolicy(input: string): ScopePolicy {
       case 'forbiddenActions':
         policy.forbiddenActions.push(value);
         break;
+      case 'allowedMethods':
+        if (!policy.allowedMethods) policy.allowedMethods = [];
+        policy.allowedMethods.push(value.toUpperCase());
+        break;
+      case 'blockedMethods':
+        if (!policy.blockedMethods) policy.blockedMethods = [];
+        policy.blockedMethods.push(value.toUpperCase());
+        break;
+      case 'blockedPaths':
+        if (!policy.blockedPaths) policy.blockedPaths = [];
+        policy.blockedPaths.push(value);
+        break;
     }
   }
   return policy;
+}
+
+export function checkMethodInScope(method: string, policy: ScopePolicy): ScopeDecision {
+  const upper = method.toUpperCase();
+  if (policy.blockedMethods?.includes(upper)) {
+    return { ok: false, reason: `HTTP method ${upper} is blocked by scope policy` };
+  }
+  if (policy.allowedMethods && policy.allowedMethods.length > 0) {
+    if (!policy.allowedMethods.includes(upper)) {
+      return { ok: false, reason: `HTTP method ${upper} is not in allowedMethods` };
+    }
+  }
+  return { ok: true };
+}
+
+export function checkPathInScope(pathname: string, policy: ScopePolicy): ScopeDecision {
+  if (!policy.blockedPaths || policy.blockedPaths.length === 0) return { ok: true };
+  for (const blocked of policy.blockedPaths) {
+    if (
+      pathname === blocked ||
+      pathname.startsWith(`${blocked}/`) ||
+      pathname.startsWith(blocked)
+    ) {
+      return { ok: false, reason: `Path ${pathname} matches blocked path ${blocked}` };
+    }
+  }
+  return { ok: true };
+}
+
+export function validateScopeFile(path: string): { ok: boolean; errors: string[] } {
+  const errors: string[] = [];
+  const full = resolve(path);
+  if (!existsSync(full)) {
+    return { ok: false, errors: [`scope file not found: ${full}`] };
+  }
+  let text: string;
+  try {
+    text = readFileSync(full, 'utf8');
+  } catch (err) {
+    return { ok: false, errors: [`failed to read scope file: ${(err as Error).message}`] };
+  }
+  let policy: ScopePolicy;
+  try {
+    policy = parseScopePolicy(text);
+  } catch (err) {
+    return { ok: false, errors: [`failed to parse scope file: ${(err as Error).message}`] };
+  }
+  if (policy.allowedTargets.length === 0 && policy.blockedTargets.length === 0) {
+    errors.push('warning: no allowedTargets or blockedTargets defined — all URLs will be allowed');
+  }
+  for (const target of policy.allowedTargets) {
+    try {
+      new URL(target);
+    } catch {
+      errors.push(`invalid allowedTarget URL: ${target}`);
+    }
+  }
+  for (const target of policy.blockedTargets) {
+    try {
+      new URL(target);
+    } catch {
+      errors.push(`invalid blockedTarget URL: ${target}`);
+    }
+  }
+  return { ok: errors.filter((e) => !e.startsWith('warning:')).length === 0, errors };
 }
 
 export function checkURLInScope(rawURL: string, policy = loadScopePolicy()): ScopeDecision {

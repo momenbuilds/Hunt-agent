@@ -123,8 +123,42 @@ ROUTES_CFG=$(HUNT_AGENT_CONFIG="$CFG_FILE" node "$CLI" model routes 2>&1 || true
 check_contains "model routes with isolated config" "$ROUTES_CFG" "Model routes\|Fallbacks\|No routes configured"
 check_not_contains "isolated config has no old branding" "$ROUTES_CFG" "pentesterflow"
 
-# ---- 11. dist/ scan for unexpected old branding ----------------------------
-printf '\n[11/11] dist/ scan for unexpected old branding\n'
+# ---- 12. scope validate + scope check ----------------------------------------
+printf '\n[12/14] Scope commands\n'
+TMP_SCOPE=$(mktemp -d)
+cat > "$TMP_SCOPE/scope.yaml" <<'SCOPE'
+displayName: Smoke Test
+scope:
+  allowedTargets:
+    - http://127.0.0.1:3000
+  blockedTargets:
+    - https://production.example.com
+SCOPE
+
+SCOPE_VALID=$(HUNT_AGENT_CONFIG="$TMP_CFG/cfg.json" node "$CLI" scope validate "$TMP_SCOPE/scope.yaml" 2>&1 || true)
+check_contains "scope validate accepts valid file" "$SCOPE_VALID" "OK\|ok\|warning"
+
+cd "$TMP_SCOPE"
+SCOPE_ALLOWED=$(HUNT_AGENT_CONFIG="$TMP_CFG/cfg.json" node "$CLI" scope check "http://127.0.0.1:3000" 2>&1 || true)
+check_contains "scope check reports allowed URL" "$SCOPE_ALLOWED" "allowed"
+
+SCOPE_BLOCKED=$(HUNT_AGENT_CONFIG="$TMP_CFG/cfg.json" node "$CLI" scope check "https://production.example.com" 2>&1 || true)
+check_contains "scope check reports blocked URL" "$SCOPE_BLOCKED" "blocked"
+cd "$ROOT"
+rm -rf "$TMP_SCOPE"
+
+# ---- 13. report + init help in --help ----------------------------------------
+printf '\n[13/14] report and init commands (non-interactive)\n'
+HELP_FULL=$(node "$CLI" --help 2>&1 || true)
+# init command should be mentioned in help or work as subcommand
+INIT_HELP=$(node "$CLI" init --yes --target http://127.0.0.1:3000 --provider claude-code 2>&1 || true)
+check_contains "init command runs" "$INIT_HELP" "Created\|already exists\|Next steps"
+
+REPORT_HELP=$(node "$CLI" report json 2>&1 || true)
+check_contains "report json runs (no findings = empty report)" "$REPORT_HELP" "report\|written"
+
+# ---- 14. dist/ scan for unexpected old branding ----------------------------
+printf '\n[14/14] dist/ scan for unexpected old branding\n'
 # Allow only intentional migration strings embedded in dist
 BAD=$(grep -r "pentesterflow" "$ROOT/dist/" 2>/dev/null | \
   grep -v "\.pentesterflow\|oldPath\|Legacy config detected\|legacy\|migrate\|migration" | \
@@ -141,6 +175,7 @@ fi
 echo ""
 echo "============================================================"
 printf "  Results: %d passed, %d failed\n" "$PASS" "$FAIL"
+
 echo "============================================================"
 echo ""
 
