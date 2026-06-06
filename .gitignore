@@ -25,3 +25,5 @@ dist/
 /.hunt-agent/
 bughunter-report-*.md
 dist-bin/
+/scope.yaml
+reports/

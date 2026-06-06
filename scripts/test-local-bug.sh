@@ -7,8 +7,9 @@
 
 set -e
 
-BIN="$(dirname "$0")/../dist/cli.js"
-FIXTURE="$(dirname "$0")/../tests/fixtures/security-apps/cors-app/server.js"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BIN="$ROOT/dist/cli.js"
+FIXTURE="$ROOT/tests/fixtures/security-apps/cors-app/server.cjs"
 
 if [ ! -f "$BIN" ]; then
   echo "[test:local-bug] dist/cli.js not found — run npm run build first"
@@ -38,16 +39,18 @@ trap cleanup EXIT INT TERM
 
 # Start CORS fixture on a random port using Node
 PORT_FILE="$TMPDIR_TEST/port.txt"
-node -e "
+STARTER="$TMPDIR_TEST/start-fixture.js"
+cat > "$STARTER" <<JSEOF
+'use strict';
 const { start } = require('$FIXTURE');
+const portFile = '$PORT_FILE';
 start(0).then(({ port }) => {
-  const fs = require('fs');
-  fs.writeFileSync('$PORT_FILE', String(port));
+  require('fs').writeFileSync(portFile, String(port));
   process.stdout.write('fixture running on port ' + port + '\n');
-  // keep alive
   setInterval(() => {}, 60000);
 }).catch(e => { process.stderr.write('fixture error: ' + e.message + '\n'); process.exit(1); });
-" &
+JSEOF
+node "$STARTER" &
 FIXTURE_PID=$!
 
 # Wait for port file (up to 5 seconds)

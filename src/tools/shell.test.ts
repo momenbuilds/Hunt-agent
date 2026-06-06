@@ -74,7 +74,7 @@ describe('ShellTool.run', () => {
       { command: "printf '' | xargs -r echo", message: /xargs -r/ },
       { command: 'stat -c %s package.json', message: /stat -c/ },
       { command: "printf '1.2\\n1.10\\n' | sort -V", message: /sort -V/ },
-      { command: 'timeout 2 curl -s https://example.com', message: /timeout/ },
+      { command: 'timeout 2 echo hello', message: /timeout/ },
     ];
 
     for (const tc of cases) {
